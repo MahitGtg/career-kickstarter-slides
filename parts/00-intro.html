@@ -1,0 +1,64 @@
+<!-- TITLE -->
+<section data-hl="all">
+  <div>
+    <p class="font-mono text-sm tracking-widest text-dim uppercase mb-8">
+      Optivex · Tech Career Kickstarter · Sydney
+    </p>
+    <h1>Exchange<br />Gateway<br />System</h1>
+    <div
+      class="border-t border-faint mt-10 pt-8 grid grid-cols-[auto_1fr] gap-x-10 gap-y-3 text-lg"
+    >
+      <span class="text-white">James</span
+      ><span class="text-dim">Admin + Matching Engine</span>
+      <span class="text-white">Mahit</span
+      ><span class="text-dim">Upstream · Auth + Risk</span>
+      <span class="text-white">Hy</span
+      ><span class="text-dim">Downstream · Shadow Book + Risk</span>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section data-hl="all">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Overview</p>
+  <h2>System Architecture</h2>
+  <h3>Vertical stack — single entry point for all trading clients</h3>
+
+  <div class="grid grid-cols-2 gap-8 mt-2">
+    <div class="flex flex-col gap-4">
+      <div class="border border-faint bg-surface p-5">
+        <p class="text-dim text-xs tracking-widest uppercase mb-2">Admin</p>
+        <p>Connects <strong>directly</strong> to Order Book</p>
+        <p class="text-dim mt-1">
+          Separate port · separate auth · bypasses Gateway
+        </p>
+      </div>
+      <div class="border border-faint bg-surface p-5">
+        <p class="text-dim text-xs tracking-widest uppercase mb-2">
+          Order Book
+        </p>
+        <p>Central matching engine — all books by <code>order_book_id</code></p>
+        <p class="text-dim mt-1">
+          Emits: OnOrderInserted · OnTrade · OnOrderCancelled
+        </p>
+      </div>
+    </div>
+    <div class="flex flex-col gap-4">
+      <div class="border border-faint bg-surface p-5">
+        <p class="text-dim text-xs tracking-widest uppercase mb-2">Gateway</p>
+        <p>Single entry point for all trading clients</p>
+        <p class="text-dim mt-1">Auth · Risk checks · Dispatch · Shadow book</p>
+      </div>
+      <div class="border border-faint bg-surface p-5">
+        <p class="text-dim text-xs tracking-widest uppercase mb-2">Clients</p>
+        <p>Authenticate with Gateway · subscribe · place orders</p>
+        <p class="text-dim mt-1">Never talk to Order Book directly</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-4 mt-6 text-sm text-dim">
+    All connections are duplex TCP — requests go up, responses and events flow
+    back down
+  </div>
+</section>

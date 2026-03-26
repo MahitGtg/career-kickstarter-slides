@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Exchange Gateway System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.css"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              mono: ["JetBrains Mono", "Courier New", "monospace"],
+            },
+            colors: {
+              dim: "#555",
+              faint: "#222",
+              faintest: "#111",
+              surface: "#0a0a0a",
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      body {
+        background: #000;
+      }
+
+      .reveal {
+        font-family: "JetBrains Mono", "Courier New", monospace;
+        font-size: 22px;
+        color: #fff;
+        background: #000;
+      }
+
+      .reveal .slides {
+        text-align: left;
+      }
+
+      .reveal .slides > section {
+        padding: 48px 48px 48px 240px;
+        display: flex !important;
+        flex-direction: column;
+        justify-content: center;
+        height: 100%;
+      }
+
+      .reveal h1,
+      .reveal h2,
+      .reveal h3 {
+        font-family: "JetBrains Mono", monospace;
+        color: #fff;
+        text-transform: none;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+      }
+
+      .reveal h1 {
+        font-size: 3em;
+        margin-bottom: 0.5em;
+      }
+      .reveal h2 {
+        font-size: 1.8em;
+        margin-bottom: 0.2em;
+      }
+      .reveal h3 {
+        font-size: 0.82em;
+        font-weight: 400;
+        color: #555;
+        margin-bottom: 1.4em;
+        letter-spacing: 0;
+      }
+
+      .reveal pre {
+        width: 100%;
+        margin: 0;
+        box-shadow: none;
+        border: 1px solid #222;
+        border-radius: 4px;
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .reveal pre code {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.82em;
+        line-height: 1.7;
+        padding: 1em 1.3em;
+        background: #0a0a0a;
+        color: #ccc;
+        max-height: none;
+        overflow: hidden;
+        display: block;
+      }
+
+      .reveal code {
+        font-family: "JetBrains Mono", monospace;
+        background: #111;
+        border: 1px solid #222;
+        padding: 0.1em 0.35em;
+        font-size: 0.88em;
+        color: #fff;
+        border-radius: 3px;
+      }
+
+      .reveal .progress {
+        background: #111;
+      }
+      .reveal .progress span {
+        background: #fff;
+      }
+      .reveal .controls button {
+        color: #333;
+      }
+      .reveal .slide-number {
+        background: none;
+        color: #333;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.5em;
+      }
+
+      /* ─── ARCHITECTURE SIDEBAR ──────────────────────── */
+
+      .arch-sidebar {
+        position: absolute;
+        left: 32px;
+        top: 0;
+        bottom: 0;
+        width: 160px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 5;
+        pointer-events: none;
+        gap: 0;
+      }
+
+      .arch-node {
+        border: 1px solid #fff;
+        padding: 7px 0;
+        width: 130px;
+        text-align: center;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        font-family: "JetBrains Mono", monospace;
+        color: #fff;
+        opacity: 0.1;
+        transition: opacity 0.5s ease;
+      }
+
+      .arch-node.hl {
+        opacity: 1;
+      }
+
+      .arch-node.node-main {
+        padding: 10px 0;
+        width: 140px;
+        font-size: 11px;
+      }
+
+      .arch-node.node-clients {
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        color: #888;
+        border-color: #888;
+      }
+      .arch-node.node-clients.hl {
+        color: #fff;
+        border-color: #fff;
+      }
+
+      .arch-edge {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0;
+        padding: 2px 0;
+      }
+
+      .arch-tip-up {
+        width: 0;
+        height: 0;
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-bottom: 7px solid #fff;
+        opacity: 0.1;
+        transition: opacity 0.5s ease;
+      }
+      .arch-tip-up.hl {
+        opacity: 1;
+      }
+
+      .arch-line-v {
+        width: 1px;
+        height: 22px;
+        background: #fff;
+        opacity: 0.1;
+        transition: opacity 0.5s ease;
+      }
+      .arch-line-v.hl {
+        opacity: 0.5;
+      }
+
+      .arch-tip-down {
+        width: 0;
+        height: 0;
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 7px solid #fff;
+        opacity: 0.1;
+        transition: opacity 0.5s ease;
+      }
+      .arch-tip-down.hl {
+        opacity: 1;
+      }
+
+      .arch-edge-label {
+        font-size: 7px;
+        color: #444;
+        letter-spacing: 0.1em;
+        font-family: "JetBrains Mono", monospace;
+        margin: 1px 0;
+        opacity: 0.1;
+        transition: opacity 0.5s ease;
+      }
+      .arch-edge-label.hl {
+        opacity: 0.6;
+      }
+
+      /* ─── LOADING ──────────────────────────────────── */
+
+      #loading {
+        position: fixed;
+        inset: 0;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        color: #222;
+        z-index: 9999;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">loading...</div>
+
+    <div class="reveal" style="opacity: 0; transition: opacity 0.3s">
+      <div class="slides" id="slide-container"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.js"></script>
+    <script>
+      const PARTS = [
+        "parts/00-intro.html",
+        "parts/01-admin.html",
+        "parts/02-upstream.html",
+        "parts/03-orderbook.html",
+        "parts/04-downstream.html",
+      ];
+
+      const SIDEBAR_HTML = `
+    <div class="arch-sidebar">
+      <div class="arch-node" data-key="admin">ADMIN</div>
+      <div class="arch-edge">
+        <div class="arch-tip-up" data-key="admin-ob-up"></div>
+        <div class="arch-line-v" data-key="admin-ob-line"></div>
+        <div class="arch-edge-label" data-key="admin-ob-label">TCP</div>
+        <div class="arch-line-v" data-key="admin-ob-line"></div>
+        <div class="arch-tip-down" data-key="admin-ob-down"></div>
+      </div>
+      <div class="arch-node node-main" data-key="ob">ORDER BOOK</div>
+      <div class="arch-edge">
+        <div class="arch-tip-up" data-key="ob-gw-up"></div>
+        <div class="arch-line-v" data-key="ob-gw-line"></div>
+        <div class="arch-edge-label" data-key="ob-gw-label">TCP</div>
+        <div class="arch-line-v" data-key="ob-gw-line"></div>
+        <div class="arch-tip-down" data-key="ob-gw-down"></div>
+      </div>
+      <div class="arch-node node-main" data-key="gw">GATEWAY</div>
+      <div class="arch-edge">
+        <div class="arch-tip-up" data-key="gw-clients-up"></div>
+        <div class="arch-line-v" data-key="gw-clients-line"></div>
+        <div class="arch-edge-label" data-key="gw-clients-label">TCP</div>
+        <div class="arch-line-v" data-key="gw-clients-line"></div>
+        <div class="arch-tip-down" data-key="gw-clients-down"></div>
+      </div>
+      <div class="arch-node node-clients" data-key="clients">CLIENTS</div>
+    </div>
+  `;
+
+      const EXPAND = {
+        all: [
+          "admin",
+          "ob",
+          "gw",
+          "clients",
+          "admin-ob-up",
+          "admin-ob-line",
+          "admin-ob-down",
+          "admin-ob-label",
+          "ob-gw-up",
+          "ob-gw-line",
+          "ob-gw-down",
+          "ob-gw-label",
+          "gw-clients-up",
+          "gw-clients-line",
+          "gw-clients-down",
+          "gw-clients-label",
+        ],
+        "admin-ob": [
+          "admin-ob-up",
+          "admin-ob-line",
+          "admin-ob-down",
+          "admin-ob-label",
+        ],
+        "admin-ob-up": ["admin-ob-up", "admin-ob-line", "admin-ob-label"],
+        "admin-ob-down": ["admin-ob-down", "admin-ob-line", "admin-ob-label"],
+        "ob-gw": ["ob-gw-up", "ob-gw-line", "ob-gw-down", "ob-gw-label"],
+        "ob-gw-up": ["ob-gw-up", "ob-gw-line", "ob-gw-label"],
+        "ob-gw-down": ["ob-gw-down", "ob-gw-line", "ob-gw-label"],
+        "gw-clients": [
+          "gw-clients-up",
+          "gw-clients-line",
+          "gw-clients-down",
+          "gw-clients-label",
+        ],
+        "gw-clients-up": [
+          "gw-clients-up",
+          "gw-clients-line",
+          "gw-clients-label",
+        ],
+        "gw-clients-down": [
+          "gw-clients-down",
+          "gw-clients-line",
+          "gw-clients-label",
+        ],
+      };
+
+      function injectSidebars() {
+        document
+          .querySelectorAll(".reveal .slides > section")
+          .forEach((section) => {
+            const hlAttr = section.getAttribute("data-hl") || "";
+            const keys = new Set();
+            hlAttr
+              .split(/\s+/)
+              .filter(Boolean)
+              .forEach((token) => {
+                if (EXPAND[token]) EXPAND[token].forEach((k) => keys.add(k));
+                else keys.add(token);
+              });
+
+            const wrapper = document.createElement("div");
+            wrapper.innerHTML = SIDEBAR_HTML;
+            const sidebar = wrapper.firstElementChild;
+
+            sidebar.querySelectorAll("[data-key]").forEach((el) => {
+              if (keys.has(el.getAttribute("data-key"))) el.classList.add("hl");
+            });
+
+            section.prepend(sidebar);
+          });
+      }
+
+      async function loadParts() {
+        const container = document.getElementById("slide-container");
+        for (const part of PARTS) {
+          try {
+            const res = await fetch(part);
+            if (!res.ok) throw new Error(`${part}: ${res.status}`);
+            const html = await res.text();
+            const wrapper = document.createElement("div");
+            wrapper.innerHTML = html;
+            while (wrapper.firstChild)
+              container.appendChild(wrapper.firstChild);
+          } catch (err) {
+            console.error("Failed to load part:", part, err);
+          }
+        }
+
+        injectSidebars();
+
+        document.getElementById("loading").style.display = "none";
+        document.querySelector(".reveal").style.opacity = "1";
+
+        Reveal.initialize({
+          hash: true,
+          controls: true,
+          controlsTutorial: false,
+          progress: true,
+          slideNumber: "c/t",
+          center: false,
+          transition: "none",
+          backgroundTransition: "none",
+          width: 1440,
+          height: 900,
+          margin: 0,
+          minScale: 0.2,
+          maxScale: 3,
+        });
+      }
+
+      loadParts();
+    </script>
+  </body>
+</html>

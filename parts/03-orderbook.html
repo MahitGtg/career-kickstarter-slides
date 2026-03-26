@@ -1,0 +1,75 @@
+<!-- PART 03 TITLE -->
+<section data-hl="ob">
+  <div>
+    <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 / James</p>
+    <h1 style="font-size:2.6em;">Order Book Processing</h1>
+    <p class="text-dim text-lg mt-4">Matching engine · Price-time priority · Events</p>
+    <div class="border-t border-faint mt-10 pt-8 flex flex-col gap-3 text-base text-dim/40">
+      <span>→ InsertOrderRequest arrives from Gateway</span>
+      <span>→ Price-time priority matching</span>
+      <span>→ Emit events: OnOrderInserted · OnTrade · OnOrderCancelled</span>
+      <span>→ Response back to Gateway</span>
+    </div>
+  </div>
+</section>
+
+<!-- MATCHING ENGINE -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Matching Engine</p>
+  <h2>Price-Time Priority</h2>
+  <h3>Best price first · earliest timestamp breaks ties</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <div class="grid grid-cols-2 gap-6 mb-6">
+        <div>
+          <p class="text-xs tracking-widest text-dim uppercase mb-3">BID (buy)</p>
+          <div class="border border-faint">
+            <div class="grid grid-cols-2 p-3 border-b border-faintest text-dim text-sm">
+              <span>Price</span><span>Qty</span>
+            </div>
+            <div class="grid grid-cols-2 p-3">100.50 <span>500</span></div>
+            <div class="grid grid-cols-2 p-3">100.50 <span>200</span></div>
+            <div class="grid grid-cols-2 p-3 text-dim">100.25 <span>800</span></div>
+          </div>
+          <p class="text-dim text-sm mt-2">Higher price = higher priority</p>
+        </div>
+        <div>
+          <p class="text-xs tracking-widest text-dim uppercase mb-3">ASK (sell)</p>
+          <div class="border border-faint">
+            <div class="grid grid-cols-2 p-3 border-b border-faintest text-dim text-sm">
+              <span>Price</span><span>Qty</span>
+            </div>
+            <div class="grid grid-cols-2 p-3">100.75 <span>300</span></div>
+            <div class="grid grid-cols-2 p-3 text-dim">101.00 <span>600</span></div>
+          </div>
+          <p class="text-dim text-sm mt-2">Lower price = higher priority</p>
+        </div>
+      </div>
+      <div class="border border-faint bg-surface p-5 text-base">
+        <p>BUY at 100.75 → crosses spread → matches best ask</p>
+        <p class="text-dim mt-2">Partial fill possible — remainder rests</p>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <p class="text-xs tracking-widest text-dim uppercase">Events emitted</p>
+      <div class="border border-faint bg-surface p-4 text-base">
+        <p><code>OnOrderInserted</code> <span class="text-dim">type 41</span></p>
+        <p class="text-dim mt-1">order_id · side · price · qty · username</p>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-base">
+        <p><code>OnTrade</code> <span class="text-dim">type 43</span></p>
+        <p class="text-dim mt-1">trade_id · buy/sell_order_id · price · qty</p>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-base">
+        <p><code>OnOrderCancelled</code> <span class="text-dim">type 42</span></p>
+        <p class="text-dim mt-1">order_id · cancellation_timestamp</p>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-base">
+        <p><code>InsertOrderResponse</code> <span class="text-dim">type 47</span></p>
+        <p class="text-dim mt-1">request_id · order_id · traded_qty · error</p>
+      </div>
+    </div>
+  </div>
+</section>

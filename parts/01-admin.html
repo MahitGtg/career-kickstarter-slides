@@ -1,0 +1,78 @@
+<!-- PART 01 TITLE -->
+<section data-hl="admin ob admin-ob">
+  <div>
+    <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 01 / James</p>
+    <h1 style="font-size:2.6em;">Admin → Order Book</h1>
+    <p class="text-dim text-lg mt-4">How instruments are created in the exchange</p>
+    <div class="border-t border-faint mt-10 pt-8 flex flex-col gap-3 text-base text-dim/40">
+      <span>→ Admin authenticates directly with OB</span>
+      <span>→ CreateInstrumentRequest</span>
+      <span>→ OB validates + responds</span>
+      <span>→ OnOrderBookCreated → Gateway → all clients</span>
+    </div>
+  </div>
+</section>
+
+<!-- CREATE INSTRUMENT -->
+<section data-hl="admin ob admin-ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 01 · Admin</p>
+  <h2>Create Instrument</h2>
+  <h3>Admin → Order Book — direct TCP, separate port</h3>
+
+  <div class="grid grid-cols-2 gap-10">
+    <pre><code>{
+  request_id:  12345,
+  instrument: {
+    symbol:      "AAPL",
+    description: "Apple Inc.",
+    currency:    "USD",
+    multiplier:  1.0
+  },
+  tick_size: 0.01
+}</code></pre>
+    <div class="flex flex-col gap-4 text-base">
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">01</span>
+        <span>Admin authenticates with OB<br><span class="text-dim">credentials never touch Gateway</span></span>
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">02</span>
+        <span>OB validates: symbol uniqueness · <code>tick_size > 0</code></span>
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">03</span>
+        <span>Assigns unique <code>order_book_id</code> · creates book</span>
+      </div>
+      <div class="flex gap-4">
+        <span class="text-dim shrink-0">04</span>
+        <span>Replies <code>CreateInstrumentResponse</code> directly<br><span class="text-dim">Gateway never sees this exchange</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSTRUMENT DELIVERY -->
+<section data-hl="ob gw clients ob-gw-down gw-clients-down">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 01 · Instrument Delivery</p>
+  <h2>OB → Gateway → All Clients</h2>
+  <h3>OnOrderBookCreated — the instrument is now live</h3>
+
+  <div class="flex flex-col gap-6 text-base">
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-dim text-xs tracking-widest uppercase mb-3">Order Book → Gateway</p>
+      <p>Sends <code>OnOrderBookCreated { order_book_id, tick_size, created_timestamp }</code></p>
+    </div>
+
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-dim text-xs tracking-widest uppercase mb-3">Gateway processes</p>
+      <p><code>price_depth_book.on_order_book_created(order_book_id)</code></p>
+      <p class="mt-1"><code>instruments["AAPL"] = { ob_id: 1001, multiplier: 1.0 }</code></p>
+    </div>
+
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-dim text-xs tracking-widest uppercase mb-3">Gateway → All Clients</p>
+      <p>Broadcasts same <code>OnOrderBookCreated</code> message to every connected client</p>
+      <p class="text-dim mt-2">Clients update instrument list — can now subscribe and trade</p>
+    </div>
+  </div>
+</section>

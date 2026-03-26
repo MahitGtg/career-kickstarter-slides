@@ -1,0 +1,379 @@
+<!-- PART 02 TITLE -->
+<section data-hl="clients gw ob gw-clients ob-gw">
+  <div>
+    <p class="text-xs tracking-widest text-dim uppercase mb-6">
+      Part 02 / Mahit
+    </p>
+    <h1 style="font-size: 2.6em">Client → Gateway → OB</h1>
+    <p class="text-dim text-lg mt-4">
+      Upstream flow — Auth · Risk · Pessimistic Update · Dispatch
+    </p>
+    <div
+      class="border-t border-faint mt-10 pt-8 flex flex-col gap-3 text-base text-dim/40"
+    >
+      <span>→ Login + session management</span>
+      <span>→ Symbol resolution</span>
+      <span>→ 6 risk checks</span>
+      <span>→ Pessimistic update — why this matters</span>
+      <span>→ Dispatch to OB</span>
+      <span>→ Cancel order</span>
+    </div>
+  </div>
+</section>
+
+<!-- AUTH -->
+<section data-hl="clients gw gw-clients-up">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 02 · Auth</p>
+  <h2>Client Authentication</h2>
+  <h3>Every connection must login before any other message</h3>
+
+  <div class="grid grid-cols-2 gap-10 text-base">
+    <div class="flex flex-col gap-4">
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">01</span>
+        <span
+          >Look up <code>users[username]</code> from <code>data.json</code
+          ><br /><span class="text-dim"
+            >read-only · loaded at startup</span
+          ></span
+        >
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">02</span>
+        <span>Compare password</span>
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">03</span>
+        <span
+          >Pass → <code>sessions[handler] = username</code><br /><span
+            class="text-dim"
+            >Fail → send error + close connection</span
+          ></span
+        >
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">04</span>
+        <span
+          >Every subsequent message checks <code>sessions[handler]</code></span
+        >
+      </div>
+      <div class="flex gap-4">
+        <span class="text-dim shrink-0">05</span>
+        <span>On disconnect → <code>del sessions[handler]</code></span>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-5">
+      <div class="border border-faint bg-surface p-5">
+        <p class="text-dim text-xs tracking-widest uppercase mb-3">
+          users dict
+        </p>
+        <p><code>dict[username → { password, full_name }]</code></p>
+        <p class="text-dim mt-2">Loaded once at startup · never mutated</p>
+      </div>
+      <div class="border border-faint bg-surface p-5">
+        <p class="text-dim text-xs tracking-widest uppercase mb-3">
+          sessions dict
+        </p>
+        <p><code>dict[handler → username]</code></p>
+        <p class="text-dim mt-2">Written on login · deleted on disconnect</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SYMBOL RESOLUTION -->
+<section data-hl="clients gw gw-clients-up">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">
+    Part 02 · Insert Order
+  </p>
+  <h2>Step 1 — Symbol Resolution</h2>
+  <h3>Reject unknown symbols before any risk work</h3>
+
+  <div class="border border-white bg-surface p-6 text-lg mb-8">
+    <p><code>instruments["AAPL"]</code></p>
+    <p class="text-dim mt-2">
+      → { order_book_id: 1001, multiplier: 1.0, tick_size: 0.01 }
+    </p>
+  </div>
+
+  <div class="grid grid-cols-2 gap-8 text-base">
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">
+        Known symbol
+      </p>
+      <p>Extract <code>order_book_id</code> and <code>multiplier</code></p>
+      <p class="text-dim mt-3">Proceed to risk checks</p>
+      <p class="text-dim mt-1">
+        multiplier computes notional: qty × price × mult
+      </p>
+    </div>
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">
+        Unknown symbol
+      </p>
+      <p>Reject immediately</p>
+      <p class="text-dim mt-3">Send InsertOrderResponse { error }</p>
+      <p class="text-dim mt-1">No risk state touched · no OB message</p>
+    </div>
+  </div>
+</section>
+
+<!-- 6 RISK CHECKS -->
+<section data-hl="gw">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">
+    Part 02 · Insert Order
+  </p>
+  <h2>Step 2 — 6 Risk Checks</h2>
+  <h3>All must pass — any fail → reject immediately</h3>
+
+  <table class="w-full border-collapse text-base mt-2">
+    <thead>
+      <tr>
+        <th
+          class="border border-faint bg-faintest text-dim font-normal p-3 text-left w-10"
+        >
+          #
+        </th>
+        <th
+          class="border border-faint bg-faintest text-dim font-normal p-3 text-left"
+        >
+          Condition
+        </th>
+        <th
+          class="border border-faint bg-faintest text-dim font-normal p-3 text-left w-44"
+        >
+          Scope
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-faint p-3">1</td>
+        <td class="border border-faint p-3">
+          <code>user_outstanding_qty + qty ≤ max</code>
+        </td>
+        <td class="border border-faint p-3 text-dim">User global</td>
+      </tr>
+      <tr>
+        <td class="border border-faint p-3">2</td>
+        <td class="border border-faint p-3">
+          <code>len(msg_timestamps) < rate_limit</code>
+        </td>
+        <td class="border border-faint p-3 text-dim">User rate</td>
+      </tr>
+      <tr>
+        <td class="border border-faint p-3">3</td>
+        <td class="border border-faint p-3">
+          <code>instr_outstanding_qty + qty ≤ max</code>
+        </td>
+        <td class="border border-faint p-3 text-dim">User × Instr</td>
+      </tr>
+      <tr>
+        <td class="border border-faint p-3">4</td>
+        <td class="border border-faint p-3">
+          <code>instr_outstanding_amt + notional ≤ max</code>
+        </td>
+        <td class="border border-faint p-3 text-dim">User × Instr</td>
+      </tr>
+      <tr>
+        <td class="border border-faint p-3">5</td>
+        <td class="border border-faint p-3">
+          <code>sum(qty_window) + qty ≤ rolling_limit</code>
+        </td>
+        <td class="border border-faint p-3 text-dim">Rolling</td>
+      </tr>
+      <tr>
+        <td class="border border-faint p-3">6</td>
+        <td class="border border-faint p-3">
+          <code>sum(amt_window) + amt ≤ rolling_limit</code>
+        </td>
+        <td class="border border-faint p-3 text-dim">Rolling</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="border border-white bg-surface p-5 mt-6 text-base">
+    <strong>Any check fails</strong> → send error response · no risk state
+    changed · no message to OB
+  </div>
+</section>
+
+<!-- WHY PESSIMISTIC -->
+<section data-hl="gw">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">
+    Part 02 · Core Design Decision
+  </p>
+  <h2>Why Pessimistic Update?</h2>
+  <h3>The concurrency problem on a single-threaded gateway</h3>
+
+  <div class="grid grid-cols-2 gap-8 mt-2">
+    <div class="border border-[#3a1a1a] p-6">
+      <p class="text-xs tracking-widest text-[#662222] uppercase mb-4">
+        Without pessimistic update
+      </p>
+      <div class="flex flex-col gap-2 text-base">
+        <p class="text-dim">1. Client sends Order A (qty=900)</p>
+        <p>2. Risk check: 0 + 900 ≤ 1000 ✓</p>
+        <p class="text-dim">3. Forwarded to OB — <em>risk NOT updated</em></p>
+        <p>4. Client sends Order B (qty=900)</p>
+        <p class="text-[#ff5555]">
+          5. Risk check: 0 + 900 ≤ 1000 ✓ — <strong>WRONG</strong>
+        </p>
+        <p class="text-[#ff5555]">
+          6. Both reach OB · 1800 resting · <strong>limit blown</strong>
+        </p>
+      </div>
+    </div>
+
+    <div class="border border-[#1a3a1a] p-6">
+      <p class="text-xs tracking-widest text-[#226622] uppercase mb-4">
+        With pessimistic update
+      </p>
+      <div class="flex flex-col gap-2 text-base">
+        <p class="text-dim">1. Client sends Order A (qty=900)</p>
+        <p>2. Risk check: 0 + 900 ≤ 1000 ✓</p>
+        <p>3. <strong>Risk updated: outstanding = 900</strong></p>
+        <p class="text-dim">4. Forwarded to OB</p>
+        <p>5. Client sends Order B (qty=900)</p>
+        <p class="text-[#55ff55]">
+          6. 900 + 900 > 1000 — <strong>REJECTED</strong>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="border border-white p-5 mt-6 text-base text-center">
+    Risk engine is always <strong>ahead</strong> of OB — no order gets processed
+    that can't be processed
+  </div>
+</section>
+
+<!-- PESSIMISTIC UPDATE CODE -->
+<section data-hl="gw ob ob-gw-up">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">
+    Part 02 · Insert Order
+  </p>
+  <h2>Step 3 — Pessimistic Update</h2>
+  <h3>Update risk state before forwarding — don't wait for OB confirmation</h3>
+
+  <pre
+    class="mt-2"
+  ><code>user_outstanding_qty[username]                     += quantity
+instrument_outstanding_qty[(username, symbol)]     += quantity
+instrument_outstanding_amount[(username, symbol)]  += quantity * price * multiplier
+
+user_msg_timestamps[username].append(now)
+instrument_order_qty_window[(username, symbol)].append((now, quantity))
+instrument_order_amount_window[(username, symbol)].append((now, amount))</code></pre>
+
+  <div class="grid grid-cols-2 gap-8 mt-6 text-base">
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-dim text-xs tracking-widest uppercase mb-3">
+        Why not update on cancel?
+      </p>
+      <p>Cancel might fail — order may already be filled</p>
+      <p class="text-dim mt-2">
+        Deductions happen downstream on confirmed cancel only
+      </p>
+    </div>
+    <div class="border border-faint bg-surface p-5">
+      <p class="text-dim text-xs tracking-widest uppercase mb-3">
+        The guarantee
+      </p>
+      <p>
+        Any concurrent order sees the <strong>already-incremented</strong> qty
+      </p>
+      <p class="text-dim mt-2">
+        Limits can never be exceeded regardless of timing
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- DISPATCH -->
+<section data-hl="gw ob ob-gw-up">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">
+    Part 02 · Insert Order
+  </p>
+  <h2>Step 4 — Dispatch to OB</h2>
+  <h3>Assign unique internal ID · store correlation · forward</h3>
+
+  <pre class="mt-2"><code>ob_request_id = next(_ob_id_counter)
+
+pending_requests[ob_request_id] = {
+    "handler":           handler,
+    "client_request_id": request_id,
+    "username":          username,
+    "symbol":            symbol,
+    "price":             price,
+    "quantity":          quantity,
+}</code></pre>
+
+  <p class="text-dim text-base mt-6">
+    Sends
+    <code
+      >InsertOrderRequest { request_id: ob_request_id, order_book_id, side,
+      price, qty }</code
+    >
+    to OB over TCP
+  </p>
+
+  <div class="border border-faint bg-surface p-5 mt-4 text-base">
+    When OB replies, gateway looks up
+    <code>pending_requests[ob_request_id]</code> to find the original client
+    handler and route the response back
+  </div>
+</section>
+
+<!-- CANCEL ORDER -->
+<section data-hl="clients gw ob gw-clients-up ob-gw-up">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">
+    Part 02 · Cancel Order
+  </p>
+  <h2>Cancel Order Flow</h2>
+  <h3>Rate check only — no outstanding qty update</h3>
+
+  <div class="grid grid-cols-2 gap-10 text-base">
+    <div class="flex flex-col gap-4">
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">01</span>
+        <span>Resolve symbol → get <code>order_book_id</code></span>
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">02</span>
+        <span
+          >Message rate check only<br /><span class="text-dim"
+            >Cancels count as messages per protocol spec</span
+          ></span
+        >
+      </div>
+      <div class="flex gap-4 border-b border-faintest pb-3">
+        <span class="text-dim shrink-0">03</span>
+        <span
+          ><strong>No other risk DS change</strong><br /><span class="text-dim"
+            >Cancel might fail — no deduction until OB confirms</span
+          ></span
+        >
+      </div>
+      <div class="flex gap-4">
+        <span class="text-dim shrink-0">04</span>
+        <span>Forward to OB with new <code>ob_request_id</code></span>
+      </div>
+    </div>
+
+    <div class="border border-white bg-surface p-6">
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">
+        Why no pessimistic deduction?
+      </p>
+      <p>Insert adds pessimistically — worst case the order rests</p>
+      <p class="mt-3">
+        Cancel is the opposite — we <em>can't assume</em> it succeeds
+      </p>
+      <p class="text-dim mt-4">
+        If we deducted and the cancel failed, the risk engine becomes
+        <em>optimistic</em> — could allow over-limit orders
+      </p>
+    </div>
+  </div>
+</section>

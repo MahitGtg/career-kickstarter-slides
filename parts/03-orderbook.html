@@ -73,3 +73,764 @@
     </div>
   </div>
 </section>
+
+<!-- INSERT: OVERVIEW -->
+<section data-hl="ob ob-gw-up">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert Flow</p>
+  <h2>Insert — Three Phases</h2>
+  <h3>Every incoming order passes through validate → match → rest</h3>
+
+  <div class="flex gap-6 mt-2 items-stretch">
+    <div class="border border-faint bg-surface p-6 flex-1">
+      <p class="text-xs tracking-widest text-dim uppercase mb-4">① Validate</p>
+      <p class="text-base">Guard against bad inputs before touching the book</p>
+      <div class="mt-4 flex flex-col gap-2 text-sm text-dim">
+        <span>· quantity &gt; 0</span>
+        <span>· price &gt; 0</span>
+        <span>· price aligns to tick_size</span>
+      </div>
+      <p class="mt-4 text-sm" style="color:#c44;">Fail → <code>InsertFailure</code></p>
+    </div>
+    <div class="flex items-center text-dim text-2xl">→</div>
+    <div class="border border-faint bg-surface p-6 flex-1">
+      <p class="text-xs tracking-widest text-dim uppercase mb-4">② Match</p>
+      <p class="text-base">Walk the opposing side while the price crosses</p>
+      <div class="mt-4 flex flex-col gap-2 text-sm text-dim">
+        <span>· BUY: sweep asks ≤ limit</span>
+        <span>· SELL: sweep bids ≥ limit</span>
+        <span>· Emit <code>BookTrade</code> per fill</span>
+      </div>
+      <p class="mt-4 text-sm" style="color:#4a4;">Trades generated</p>
+    </div>
+    <div class="flex items-center text-dim text-2xl">→</div>
+    <div class="border border-faint bg-surface p-6 flex-1">
+      <p class="text-xs tracking-widest text-dim uppercase mb-4">③ Rest</p>
+      <p class="text-base">Unfilled quantity joins the book as a resting order</p>
+      <div class="mt-4 flex flex-col gap-2 text-sm text-dim">
+        <span>· Create <code>RestingOrder</code></span>
+        <span>· Enqueue at price level (FIFO)</span>
+        <span>· Update level quantities</span>
+      </div>
+      <p class="mt-4 text-sm" style="color:#888;">remaining_qty may be 0</p>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-4 mt-6 text-sm text-dim">
+    Returns <code>InsertSuccess</code>: order_id · timestamp · trades[] · traded_quantity · resting_quantity
+  </div>
+</section>
+
+<!-- INSERT: SOURCE CODE -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert — Source</p>
+  <h2>insert() — Full Method</h2>
+  <h3>order_book/book.py</h3>
+
+  <div class="grid gap-10 mt-2" style="grid-template-columns: 1.3fr 0.7fr;">
+    <div>
+      <pre><code style="font-size:0.68em; line-height:1.5;">def insert(self, params: InsertParams) -> InsertResult:
+    if params.quantity <= 0:                                  # ①
+        return InsertFailure("quantity must be positive")
+    if params.price <= 0:
+        return InsertFailure("price must be positive")
+    if self._meta.tick_size > 0:
+        ticks = round(params.price / self._meta.tick_size, 8)
+        if abs(ticks - round(ticks)) > 1e-6:
+            return InsertFailure(f"price {params.price} "
+                f"is not a multiple of tick_size {self._meta.tick_size}")
+
+    limit = _price_key(params.price)                         # ②
+    incoming_id = self._alloc_order_id()
+    remaining = params.quantity
+    trades: list[BookTrade] = []
+
+    if params.side == Side.BUY:                               # ③
+        remaining = self._match_buy(incoming_id, limit, remaining, trades)
+    else:
+        remaining = self._match_sell(incoming_id, limit, remaining, trades)
+
+    traded_qty = sum(t.quantity for t in trades)
+    ts = self._now()
+
+    if remaining > 0:                                         # ④
+        resting = RestingOrder(
+            order_id=incoming_id,
+            order_book_id=self._meta.order_book_id,
+            side=params.side, price=limit,
+            remaining_quantity=remaining,
+            username=params.username,
+        )
+        self._orders[incoming_id] = resting
+        if params.side == Side.BUY:
+            self._enqueue_bid(incoming_id, limit)
+        else:
+            self._enqueue_ask(incoming_id, limit)
+
+    return InsertSuccess(                                     # ⑤
+        order_id=incoming_id, timestamp=ts,
+        trades=tuple(trades),
+        traded_quantity=traded_qty,
+        resting_quantity=remaining,
+    )</code></pre>
+    </div>
+
+    <div class="flex flex-col gap-4 text-sm">
+      <div class="border border-faint p-4">
+        <span class="text-dim">①</span> Validation guards — reject before any state mutation
+      </div>
+      <div class="border border-faint p-4">
+        <span class="text-dim">②</span> Round price to 4 d.p., allocate monotonic order_id
+      </div>
+      <div class="border border-faint p-4">
+        <span class="text-dim">③</span> Branch on side → walk opposing book while price crosses
+      </div>
+      <div class="border border-faint p-4">
+        <span class="text-dim">④</span> Unfilled remainder creates a <code>RestingOrder</code>, enqueued at its price level
+      </div>
+      <div class="border border-faint p-4">
+        <span class="text-dim">⑤</span> Always returns success with trades, traded qty, and resting qty
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSERT: VALIDATION -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert — Validation</p>
+  <h2>Insert — Input Guards</h2>
+  <h3>Three checks that can reject an order before any matching</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div class="flex flex-col gap-5">
+      <div class="border border-faint bg-surface p-5">
+        <div class="flex items-baseline gap-3 mb-3">
+          <span style="color:#c44;">✗</span>
+          <p class="text-base">Quantity must be positive</p>
+        </div>
+        <pre><code>if params.quantity &lt;= 0:
+    return InsertFailure("quantity must be positive")</code></pre>
+      </div>
+      <div class="border border-faint bg-surface p-5">
+        <div class="flex items-baseline gap-3 mb-3">
+          <span style="color:#c44;">✗</span>
+          <p class="text-base">Price must be positive</p>
+        </div>
+        <pre><code>if params.price &lt;= 0:
+    return InsertFailure("price must be positive")</code></pre>
+      </div>
+      <div class="border border-faint bg-surface p-5">
+        <div class="flex items-baseline gap-3 mb-3">
+          <span style="color:#c44;">✗</span>
+          <p class="text-base">Price must align to tick size</p>
+        </div>
+        <pre><code>if self._meta.tick_size &gt; 0:
+    ticks = round(params.price / self._meta.tick_size, 8)
+    if abs(ticks - round(ticks)) &gt; 1e-6:
+        return InsertFailure(...)</code></pre>
+        <p class="text-dim text-sm mt-3">e.g. tick_size = 0.25 → valid: 100.00, 100.25 · invalid: 100.10</p>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-5">
+      <div class="border border-faint p-5">
+        <p class="text-xs tracking-widest text-dim uppercase mb-4">After validation passes</p>
+        <pre><code style="font-size:0.78em; line-height:1.55;">limit = _price_key(params.price)  # round to 4 d.p.
+incoming_id = self._alloc_order_id()
+remaining = params.quantity
+trades: list[BookTrade] = []
+
+if params.side == Side.BUY:
+    remaining = self._match_buy(
+        incoming_id, limit, remaining, trades)
+else:
+    remaining = self._match_sell(
+        incoming_id, limit, remaining, trades)</code></pre>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-sm text-dim">
+        <code>InsertFailure</code> is returned immediately — no order_id is consumed, no state is mutated
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSERT: MATCHING — BUY AGGRESSOR -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert — Matching</p>
+  <h2>Match Buy — Sweep the Ask Side</h2>
+  <h3>Walk ask levels low → high while best_ask ≤ limit price</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">ASK BOOK (sorted ascending)</p>
+      <div class="border border-faint">
+        <div class="grid grid-cols-3 p-3 border-b border-faintest text-dim text-sm">
+          <span>Price</span><span>Qty</span><span>Order</span>
+        </div>
+        <div class="grid grid-cols-3 p-3" style="background:#1a0a0a; border-left: 3px solid #c44;">
+          <span>100.75</span><span>300</span><span class="text-dim">#5</span>
+        </div>
+        <div class="grid grid-cols-3 p-3" style="background:#1a0a0a; border-left: 3px solid #c44;">
+          <span>101.00</span><span>200</span><span class="text-dim">#3</span>
+        </div>
+        <div class="grid grid-cols-3 p-3 text-dim" style="border-left: 3px solid transparent;">
+          <span>101.50</span><span>600</span><span>#7</span>
+        </div>
+      </div>
+
+      <div class="mt-6 border border-faint bg-surface p-5">
+        <p class="text-xs tracking-widest text-dim uppercase mb-3">Incoming BUY</p>
+        <p class="text-lg">Price: <code>101.00</code> &nbsp; Qty: <code>400</code></p>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <p class="text-xs tracking-widest text-dim uppercase mb-1">Matching loop</p>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p><span class="text-dim">Step 1</span> &nbsp; best ask = 100.75 ≤ 101.00</p>
+        <p class="mt-1">Match order #5: fill <code>300</code> at <code>100.75</code></p>
+        <p class="text-dim mt-1">remaining: 400 → 100 · order #5 fully filled, removed</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p><span class="text-dim">Step 2</span> &nbsp; best ask = 101.00 ≤ 101.00</p>
+        <p class="mt-1">Match order #3: fill <code>100</code> at <code>101.00</code></p>
+        <p class="text-dim mt-1">remaining: 100 → 0 · order #3 partially filled (100 left)</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm text-dim" style="border-left: 3px solid transparent;">
+        <p>Loop exits: remaining = 0 (fully filled)</p>
+        <p class="mt-1">If remaining &gt; 0, next ask (101.50) &gt; limit → also exits</p>
+      </div>
+
+      <div class="border border-faint bg-surface p-4 text-sm mt-2">
+        <p class="text-xs tracking-widest text-dim uppercase mb-2">Result</p>
+        <p>2 × <code>BookTrade</code> emitted &nbsp;·&nbsp; traded_qty = 400 &nbsp;·&nbsp; resting_qty = 0</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSERT: MATCHING — SELL AGGRESSOR -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert — Matching</p>
+  <h2>Match Sell — Sweep the Bid Side</h2>
+  <h3>Walk bid levels high → low while best_bid ≥ limit price</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">BID BOOK (sorted by -price ascending)</p>
+      <div class="border border-faint">
+        <div class="grid grid-cols-3 p-3 border-b border-faintest text-dim text-sm">
+          <span>Price</span><span>Qty</span><span>Order</span>
+        </div>
+        <div class="grid grid-cols-3 p-3" style="background:#0a1a0a; border-left: 3px solid #4a4;">
+          <span>100.50</span><span>500</span><span class="text-dim">#1</span>
+        </div>
+        <div class="grid grid-cols-3 p-3" style="background:#0a1a0a; border-left: 3px solid #4a4;">
+          <span>100.50</span><span>200</span><span class="text-dim">#2</span>
+        </div>
+        <div class="grid grid-cols-3 p-3 text-dim" style="border-left: 3px solid transparent;">
+          <span>100.25</span><span>800</span><span>#4</span>
+        </div>
+      </div>
+
+      <div class="mt-6 border border-faint bg-surface p-5">
+        <p class="text-xs tracking-widest text-dim uppercase mb-3">Incoming SELL</p>
+        <p class="text-lg">Price: <code>100.50</code> &nbsp; Qty: <code>600</code></p>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <p class="text-xs tracking-widest text-dim uppercase mb-1">Matching loop</p>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #4a4;">
+        <p><span class="text-dim">Step 1</span> &nbsp; best bid = 100.50 ≥ 100.50</p>
+        <p class="mt-1">Match order #1 (FIFO): fill <code>500</code> at <code>100.50</code></p>
+        <p class="text-dim mt-1">remaining: 600 → 100 · order #1 fully filled, removed</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #4a4;">
+        <p><span class="text-dim">Step 2</span> &nbsp; best bid = 100.50 ≥ 100.50</p>
+        <p class="mt-1">Match order #2 (next in FIFO): fill <code>100</code> at <code>100.50</code></p>
+        <p class="text-dim mt-1">remaining: 100 → 0 · order #2 partially filled (100 left)</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm text-dim" style="border-left: 3px solid transparent;">
+        <p>Same price level, time priority decides: #1 arrived before #2</p>
+        <p class="mt-1">If remaining &gt; 0 and next bid (100.25) &lt; limit → loop exits</p>
+      </div>
+
+      <div class="border border-faint bg-surface p-4 text-sm mt-2">
+        <p class="text-xs tracking-widest text-dim uppercase mb-2">Result</p>
+        <p>2 × <code>BookTrade</code> emitted &nbsp;·&nbsp; traded_qty = 600 &nbsp;·&nbsp; resting_qty = 0</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MATCHING: SOURCE CODE -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Matching — Source</p>
+  <h2>_match_buy() &amp; _match_sell()</h2>
+  <h3>order_book/book.py — symmetric matching loops</h3>
+
+  <div class="grid grid-cols-2 gap-6 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">_match_buy — aggressor is BUY</p>
+      <pre><code style="font-size:0.65em; line-height:1.45;">def _match_buy(self, incoming_id, limit, remaining, trades):
+    while (remaining > 0
+           and self._ask_prices
+           and self._ask_prices[0] <= limit):
+        level = self._ask_prices[0]
+        q = self._ask_queues[level]
+        passive_id = q[0]
+        passive = self._orders[passive_id]
+        qty = min(remaining, passive.remaining_quantity)
+        trades.append(BookTrade(
+            trade_id=self._alloc_trade_id(),
+            order_book_id=self._meta.order_book_id,
+            timestamp=self._now(),
+            buy_order_id=incoming_id,
+            sell_order_id=passive_id,
+            price=level, quantity=qty,
+            aggressor_side=Side.BUY,
+        ))
+        remaining -= qty
+        self._reduce_resting(passive_id, qty, Side.SELL, level)
+    return remaining</code></pre>
+    </div>
+
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">_match_sell — aggressor is SELL</p>
+      <pre><code style="font-size:0.65em; line-height:1.45;">def _match_sell(self, incoming_id, limit, remaining, trades):
+    while remaining > 0 and self._bid_neg:
+        level = -self._bid_neg[0]
+        if level < limit:
+            break
+        q = self._bid_queues[level]
+        passive_id = q[0]
+        passive = self._orders[passive_id]
+        qty = min(remaining, passive.remaining_quantity)
+        trades.append(BookTrade(
+            trade_id=self._alloc_trade_id(),
+            order_book_id=self._meta.order_book_id,
+            timestamp=self._now(),
+            buy_order_id=passive_id,
+            sell_order_id=incoming_id,
+            price=level, quantity=qty,
+            aggressor_side=Side.SELL,
+        ))
+        remaining -= qty
+        self._reduce_resting(passive_id, qty, Side.BUY, level)
+    return remaining</code></pre>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-3 gap-4 mt-5">
+    <div class="border border-faint p-3 text-sm">
+      <span class="text-dim">Loop guard:</span> &nbsp; BUY checks <code>ask[0] &lt;= limit</code> · SELL checks <code>-bid_neg[0] &gt;= limit</code>
+    </div>
+    <div class="border border-faint p-3 text-sm">
+      <span class="text-dim">Front of queue:</span> &nbsp; <code>q[0]</code> is always the time-priority passive order
+    </div>
+    <div class="border border-faint p-3 text-sm">
+      <span class="text-dim">Per fill:</span> &nbsp; <code>_reduce_resting</code> updates or removes the passive order
+    </div>
+  </div>
+</section>
+
+<!-- INSERT: RESTING -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert — Resting</p>
+  <h2>Insert — Resting Phase</h2>
+  <h3>Unfilled quantity joins the book at its price level</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">When remaining &gt; 0 — from insert()</p>
+      <pre><code style="font-size:0.72em; line-height:1.5;">if remaining > 0:
+    resting = RestingOrder(
+        order_id=incoming_id,
+        order_book_id=self._meta.order_book_id,
+        side=params.side,
+        price=limit,
+        remaining_quantity=remaining,
+        username=params.username,
+    )
+    self._orders[incoming_id] = resting
+    if params.side == Side.BUY:
+        self._enqueue_bid(incoming_id, limit)
+    else:
+        self._enqueue_ask(incoming_id, limit)</code></pre>
+    </div>
+
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">_enqueue_bid — add to bid side</p>
+      <pre><code style="font-size:0.72em; line-height:1.5;">def _enqueue_bid(self, order_id, price):
+    if price not in self._bid_queues:
+        self._bid_queues[price] = deque()
+        bisect.insort(self._bid_neg, -price)
+    self._bid_queues[price].append(order_id)
+    self._apply_level_quantity_delta(
+        Side.BUY, price,
+        self._orders[order_id].remaining_quantity,
+    )</code></pre>
+
+      <div class="mt-5 flex flex-col gap-3">
+        <div class="border border-faint p-3 text-sm">
+          <span class="text-dim">New level?</span> &nbsp; Create deque, <code>bisect.insort</code> price into sorted list
+        </div>
+        <div class="border border-faint p-3 text-sm">
+          <span class="text-dim">Existing level?</span> &nbsp; Append to back of deque (FIFO)
+        </div>
+        <div class="border border-faint p-3 text-sm">
+          <span class="text-dim">Bid trick:</span> &nbsp; Store <code>-price</code> so ascending sort gives best bid first
+        </div>
+      </div>
+
+      <div class="border border-faint bg-surface p-3 text-sm mt-3 text-dim">
+        _enqueue_ask is identical but stores price directly (ascending = best first)
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSERT: REDUCING RESTING ORDERS -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Insert — During Matching</p>
+  <h2>Reducing Resting Orders</h2>
+  <h3>Each fill decrements the passive order — fully filled orders are removed</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">_reduce_resting() source</p>
+      <pre><code style="font-size:0.68em; line-height:1.45;">def _reduce_resting(self, order_id, qty, side, price):
+    resting = self._orders[order_id]
+    new_rem = resting.remaining_quantity - qty
+    if new_rem < 0:
+        raise AssertionError("over-fill")
+
+    self._apply_level_quantity_delta(side, price, -qty)
+
+    if new_rem == 0:
+        del self._orders[order_id]
+        if side == Side.BUY:
+            self._pop_front_bid(order_id, price)
+        else:
+            self._pop_front_ask(order_id, price)
+    else:
+        self._orders[order_id] = replace(
+            resting, remaining_quantity=new_rem
+        )</code></pre>
+
+      <div class="mt-4 flex flex-col gap-3">
+        <div class="border border-faint p-3 text-sm">
+          <span style="color:#c44;">new_rem == 0</span> &nbsp; → delete order, pop front of deque, clean up empty level
+        </div>
+        <div class="border border-faint p-3 text-sm">
+          <span style="color:#4a4;">new_rem &gt; 0</span> &nbsp; → <code>dataclasses.replace()</code> with new remaining, stays at front
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">Visual — ask level at 100.75</p>
+      <div class="border border-faint bg-surface p-5 mb-4">
+        <p class="text-sm text-dim mb-2">Before: 3 orders in FIFO queue</p>
+        <div class="flex gap-3 text-sm">
+          <div class="border border-faint p-3 text-center" style="border-color:#c44;">
+            <p>#5</p><p class="text-dim">qty 300</p>
+          </div>
+          <div class="border border-faint p-3 text-center">
+            <p>#8</p><p class="text-dim">qty 150</p>
+          </div>
+          <div class="border border-faint p-3 text-center">
+            <p>#12</p><p class="text-dim">qty 400</p>
+          </div>
+          <span class="text-dim flex items-center text-sm">← front</span>
+        </div>
+      </div>
+
+      <div class="border border-faint bg-surface p-5 mb-4">
+        <p class="text-sm text-dim mb-2">After fill of 300 (order #5 fully filled)</p>
+        <div class="flex gap-3 text-sm">
+          <div class="border border-faint p-3 text-center" style="border-color:#4a4;">
+            <p>#8</p><p class="text-dim">qty 150</p>
+          </div>
+          <div class="border border-faint p-3 text-center">
+            <p>#12</p><p class="text-dim">qty 400</p>
+          </div>
+          <span class="text-dim flex items-center text-sm">← new front</span>
+        </div>
+      </div>
+
+      <div class="border border-faint p-4 text-sm text-dim">
+        Level quantity: 850 → 550 &nbsp;·&nbsp; If queue becomes empty, price level is removed from sorted list
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CANCEL: FLOW -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Cancel Flow</p>
+  <h2>Cancel — Remove a Resting Order</h2>
+  <h3>Lookup by order_id · remove from queue · adjust quantities · clean up</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <div class="flex flex-col gap-4">
+        <div class="border border-faint p-5 text-base">
+          <div class="flex gap-3 items-start">
+            <span class="text-dim">1.</span>
+            <div>
+              <p>Lookup <code>order_id</code> in <code>_orders</code> dict</p>
+              <p class="text-dim text-sm mt-1">O(1) lookup — if missing, return <code>CancelFailure("unknown order_id")</code></p>
+            </div>
+          </div>
+        </div>
+        <div class="border border-faint p-5 text-base">
+          <div class="flex gap-3 items-start">
+            <span class="text-dim">2.</span>
+            <div>
+              <p>Record <code>remaining_quantity</code></p>
+              <p class="text-dim text-sm mt-1">Returned to caller so they know how much was still resting</p>
+            </div>
+          </div>
+        </div>
+        <div class="border border-faint p-5 text-base">
+          <div class="flex gap-3 items-start">
+            <span class="text-dim">3.</span>
+            <div>
+              <p>Remove from price level queue</p>
+              <p class="text-dim text-sm mt-1">BUY → _remove_bid_order · SELL → _remove_ask_order</p>
+            </div>
+          </div>
+        </div>
+        <div class="border border-faint p-5 text-base">
+          <div class="flex gap-3 items-start">
+            <span class="text-dim">4.</span>
+            <div>
+              <p>Delete from <code>_orders</code> dict</p>
+              <p class="text-dim text-sm mt-1">Order no longer exists — future cancel returns failure</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-5">
+      <p class="text-xs tracking-widest text-dim uppercase">_remove_bid_order — source</p>
+      <pre><code style="font-size:0.72em; line-height:1.5;">def _remove_bid_order(self, order_id, price, quantity):
+    q = self._bid_queues[price]
+    q.remove(order_id)
+    self._apply_level_quantity_delta(
+        Side.BUY, price, -quantity)
+    self._clear_bid_level_if_empty(price)</code></pre>
+
+      <div class="flex flex-col gap-3">
+        <div class="border border-faint p-4 text-sm">
+          <span class="text-dim">Unlike matching:</span> &nbsp; can remove from <em>any</em> position in the deque, not just front
+        </div>
+        <div class="border border-faint p-4 text-sm">
+          <span class="text-dim">Level cleanup:</span> &nbsp; if deque empties, delete the price level and remove from sorted price list
+        </div>
+        <div class="border border-faint p-4 text-sm">
+          <span class="text-dim">Quantity tracking:</span> &nbsp; aggregate level qty decremented by the full remaining_quantity
+        </div>
+      </div>
+
+      <div class="border border-faint bg-surface p-4 text-sm mt-2">
+        <p>Returns <code>CancelSuccess</code>: cancellation_timestamp · remaining_quantity</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CANCEL: SOURCE CODE -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Cancel — Source</p>
+  <h2>cancel() &amp; Cleanup Helpers</h2>
+  <h3>order_book/book.py</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">cancel() — entry point</p>
+      <pre><code style="font-size:0.72em; line-height:1.5;">def cancel(self, order_id: int) -> CancelResult:
+    resting = self._orders.get(order_id)
+    if resting is None:
+        return CancelFailure("unknown order_id")
+
+    rem = resting.remaining_quantity
+    ts = self._now()
+
+    if resting.side == Side.BUY:
+        self._remove_bid_order(
+            order_id, resting.price, rem)
+    else:
+        self._remove_ask_order(
+            order_id, resting.price, rem)
+
+    del self._orders[order_id]
+    return CancelSuccess(
+        cancellation_timestamp=ts,
+        remaining_quantity=rem)</code></pre>
+    </div>
+
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">_clear_bid_level_if_empty</p>
+      <pre><code style="font-size:0.72em; line-height:1.5;">def _clear_bid_level_if_empty(self, price):
+    q = self._bid_queues.get(price)
+    if q is None or q:   # still has orders
+        return
+    del self._bid_queues[price]
+    neg = -price
+    idx = bisect.bisect_left(self._bid_neg, neg)
+    if (idx < len(self._bid_neg)
+            and self._bid_neg[idx] == neg):
+        self._bid_neg.pop(idx)</code></pre>
+
+      <p class="text-xs tracking-widest text-dim uppercase mb-3 mt-5">_apply_level_quantity_delta</p>
+      <pre><code style="font-size:0.72em; line-height:1.5;">def _apply_level_quantity_delta(
+        self, side, price, quantity_delta):
+    levels = (self._bid_level_quantities
+              if side == Side.BUY
+              else self._ask_level_quantities)
+    new_qty = levels.get(price, 0) + quantity_delta
+    if new_qty == 0:
+        levels.pop(price, None)
+        return
+    levels[price] = new_qty</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- CANCEL: VISUAL WALK-THROUGH -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Cancel — Example</p>
+  <h2>Cancel Walk-through</h2>
+  <h3>Cancel order #2 (BUY 200 @ 100.50) from the bid book</h3>
+
+  <div class="grid grid-cols-2 gap-10 mt-2">
+    <div>
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">BID BOOK — Before cancel</p>
+      <div class="border border-faint mb-6">
+        <div class="grid grid-cols-3 p-3 border-b border-faintest text-dim text-sm">
+          <span>Price</span><span>Qty</span><span>Orders</span>
+        </div>
+        <div class="grid grid-cols-3 p-3">
+          <span>100.50</span>
+          <span>700</span>
+          <span class="text-sm">#1(500) <span style="color:#c44;">#2(200)</span></span>
+        </div>
+        <div class="grid grid-cols-3 p-3 text-dim">
+          <span>100.25</span>
+          <span>800</span>
+          <span class="text-sm">#4(800)</span>
+        </div>
+      </div>
+
+      <p class="text-xs tracking-widest text-dim uppercase mb-3">BID BOOK — After cancel</p>
+      <div class="border border-faint">
+        <div class="grid grid-cols-3 p-3 border-b border-faintest text-dim text-sm">
+          <span>Price</span><span>Qty</span><span>Orders</span>
+        </div>
+        <div class="grid grid-cols-3 p-3">
+          <span>100.50</span>
+          <span style="color:#4a4;">500</span>
+          <span class="text-sm">#1(500)</span>
+        </div>
+        <div class="grid grid-cols-3 p-3 text-dim">
+          <span>100.25</span>
+          <span>800</span>
+          <span class="text-sm">#4(800)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p class="text-dim">Step 1 — Lookup</p>
+        <p class="mt-1"><code>_orders[2]</code> → RestingOrder(BUY, 100.50, qty=200)</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p class="text-dim">Step 2 — Remove from queue</p>
+        <p class="mt-1"><code>bid_queues[100.50].remove(2)</code></p>
+        <p class="text-dim mt-1">deque: [#1, #2] → [#1]</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p class="text-dim">Step 3 — Adjust level quantity</p>
+        <p class="mt-1"><code>level_qty[100.50] -= 200</code> → 700 → 500</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p class="text-dim">Step 4 — Cleanup check</p>
+        <p class="mt-1">Queue not empty → price level stays</p>
+        <p class="text-dim mt-1">If queue were empty, 100.50 would be removed from sorted bid list</p>
+      </div>
+
+      <div class="border border-faint p-4 text-sm" style="border-left: 3px solid #c44;">
+        <p class="text-dim">Step 5 — Delete order</p>
+        <p class="mt-1"><code>del _orders[2]</code></p>
+      </div>
+
+      <div class="border border-faint bg-surface p-4 text-sm mt-2">
+        <code>CancelSuccess</code>(remaining_quantity=200)
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DATA STRUCTURES OVERVIEW -->
+<section data-hl="ob">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 03 · Internal Structures</p>
+  <h2>Book Data Structures</h2>
+  <h3>From __init__ — sorted price lists · FIFO deques per level · aggregate quantities</h3>
+
+  <div class="grid grid-cols-2 gap-8 mt-2">
+    <div>
+      <pre><code style="font-size:0.68em; line-height:1.45;">def __init__(self, meta: OrderBookMeta, *,
+             tick_clock=None):
+    self._meta = meta
+    self._tick_clock = tick_clock or (
+        lambda: int(time.time() * 1000) & ((1 << 62) - 1))
+
+    self._next_order_id = 1
+    self._next_trade_id = 1
+
+    self._orders: dict[int, RestingOrder] = {}
+
+    # Bid side: store -price sorted ascending
+    self._bid_neg: list[float] = []
+    self._bid_queues: dict[float, deque[int]] = {}
+    self._bid_level_quantities: dict[float, int] = {}
+
+    # Ask side: store price sorted ascending
+    self._ask_prices: list[float] = []
+    self._ask_queues: dict[float, deque[int]] = {}
+    self._ask_level_quantities: dict[float, int] = {}</code></pre>
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <div class="border border-faint bg-surface p-4 text-sm">
+        <p class="text-xs tracking-widest text-dim uppercase mb-2">_orders</p>
+        <p><code>dict[int, RestingOrder]</code> — all live orders by order_id. O(1) lookup for cancel and matching.</p>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-sm">
+        <p class="text-xs tracking-widest text-dim uppercase mb-2">Price levels</p>
+        <p><code>_bid_neg</code> / <code>_ask_prices</code> — sorted lists. Bids store <code>-price</code> so ascending = best first. <code>bisect.insort</code> for O(log n) insert.</p>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-sm">
+        <p class="text-xs tracking-widest text-dim uppercase mb-2">Level queues</p>
+        <p><code>dict[float, deque[int]]</code> — FIFO queue of order_ids at each price. Front = highest time priority. Matching pops front; cancel can remove any position.</p>
+      </div>
+      <div class="border border-faint bg-surface p-4 text-sm">
+        <p class="text-xs tracking-widest text-dim uppercase mb-2">Level quantities</p>
+        <p><code>dict[float, int]</code> — aggregate remaining_quantity per price level. Maintained incrementally; entry removed when zero.</p>
+      </div>
+    </div>
+  </div>
+</section>

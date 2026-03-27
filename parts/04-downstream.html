@@ -65,65 +65,210 @@ instrument_outstanding_amount[(username, symbol)]  -= trade.quantity * trade.pri
   </div>
 </section>
 
-<!-- FULL FLOW SUMMARY -->
-<section data-hl="all">
-  <p class="text-xs tracking-widest text-dim uppercase mb-6">Summary</p>
-  <h2>Full Order Lifecycle</h2>
-  <h3>End-to-end — from client to OB and back</h3>
+<!-- PERFORMANCE TRADE-OFFS: CURRENT DESIGN -->
+<section data-hl="ob gw ob-gw-down">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 04 · Performance Trade-offs</p>
+  <h2>PriceDepthBook — Current Design</h2>
+  <h3>Data structure: <code>dict[float, int]</code> — unsorted hash map per side</h3>
 
-  <div class="flex flex-col gap-[6px] mt-2 text-[15px]">
+  <div class="flex flex-col gap-[2px] mt-2 text-[15px]">
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">01</span>
-      <span class="border border-white px-3 py-1 text-xs">CLIENT</span>
-      <span class="text-dim">→</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-dim">LoginRequest · auth · session</span>
+      <code class="text-white" style="min-width:290px">on_order_inserted()</code>
+      <span class="text-dim">O(1)</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">02</span>
-      <span class="border border-white px-3 py-1 text-xs">CLIENT</span>
-      <span class="text-dim">→</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-dim">InsertOrderRequest · symbol · 6 risk checks</span>
+      <code class="text-white" style="min-width:290px">on_trade()</code>
+      <span class="text-dim">O(1)</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <code class="text-white" style="min-width:290px">on_order_cancelled()</code>
+      <span class="text-dim">O(1)</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-white bg-surface">
-      <span class="text-dim w-8">03</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-white font-semibold">Pessimistic risk update — BEFORE forwarding</span>
+      <code class="text-white" style="min-width:290px">get_bids()</code>
+      <span class="text-white font-semibold">O(n log n)</span>
+      <span class="text-dim">← sorted() on every call</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-white bg-surface">
+      <code class="text-white" style="min-width:290px">get_asks()</code>
+      <span class="text-white font-semibold">O(n log n)</span>
+      <span class="text-dim">← sorted() on every call</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">04</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-dim">→</span>
-      <span class="border border-white px-3 py-1 text-xs">ORDER BOOK</span>
-      <span class="text-dim">Dispatch via pending_requests</span>
+      <code class="text-white" style="min-width:290px">get_order()</code>
+      <span class="text-dim">O(1)</span>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-5 mt-8 text-base">
+    <p class="text-dim">Reads are the bottleneck — <code>get_bids</code> / <code>get_asks</code> are called on every order book change to push market data to all subscribers</p>
+  </div>
+</section>
+
+<!-- PERFORMANCE TRADE-OFFS: OPTIMIZATION PATH -->
+<section data-hl="ob gw ob-gw-down">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 04 · Optimization Path</p>
+  <h2>SortedDict — Sorted at Insert Time</h2>
+  <h3>Replace <code>dict</code> with <code>SortedDict</code> from <code>sortedcontainers</code> — B-tree backed, always sorted</h3>
+
+  <div class="flex flex-col gap-[2px] mt-2 text-[15px]">
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <code class="text-white" style="min-width:290px">on_order_inserted()</code>
+      <span class="text-dim">O(log n)</span>
+      <span class="text-dim/40 text-xs ml-2">was O(1)</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">05</span>
-      <span class="border border-white px-3 py-1 text-xs">ORDER BOOK</span>
-      <span class="text-dim">Price-time matching · emit events</span>
+      <code class="text-white" style="min-width:290px">on_trade()</code>
+      <span class="text-dim">O(log n)</span>
+      <span class="text-dim/40 text-xs ml-2">was O(1)</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">06</span>
-      <span class="border border-white px-3 py-1 text-xs">ORDER BOOK</span>
-      <span class="text-dim">→</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-dim">Response · error → revert · OK → store</span>
+      <code class="text-white" style="min-width:290px">on_order_cancelled()</code>
+      <span class="text-dim">O(log n)</span>
+      <span class="text-dim/40 text-xs ml-2">was O(1)</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-white bg-surface">
+      <code class="text-white" style="min-width:290px">get_bids()</code>
+      <span class="text-white font-semibold">O(n)</span>
+      <span class="text-dim ml-2">← already sorted, just iterate</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-white bg-surface">
+      <code class="text-white" style="min-width:290px">get_asks()</code>
+      <span class="text-white font-semibold">O(n)</span>
+      <span class="text-dim ml-2">← already sorted, just iterate</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">07</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-dim">→</span>
-      <span class="border border-dim text-dim px-3 py-1 text-xs">CLIENT</span>
-      <span class="text-dim">Forward response · update shadow book</span>
+      <code class="text-white" style="min-width:290px">get_order()</code>
+      <span class="text-dim">O(1)</span>
+      <span class="text-dim/40 text-xs ml-2">unchanged</span>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-5 mt-8 text-base">
+    <p class="text-dim">Trade-off: pay O(log n) on writes to get O(n) reads — worth it when reads vastly outnumber writes (market data pushed to every subscriber on every change)</p>
+  </div>
+</section>
+
+<!-- FAIRNESS: CURRENT APPROACH -->
+<section data-hl="gw clients gw-clients-down">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 04 · Market Data Fairness</p>
+  <h2>Current Approach — Naive Iteration</h2>
+  <h3>L1 / L2 updates broadcast to subscribers in a fixed for-loop</h3>
+
+  <pre class="mt-2"><code>for client in subscribers:
+    client.send(market_data)      # always same order</code></pre>
+
+  <div class="flex flex-col gap-[2px] mt-8 text-[15px]">
+    <div class="flex items-center gap-4 px-4 py-3 border border-white bg-surface">
+      <span class="text-dim w-12">1st</span>
+      <span class="border border-white px-3 py-1 text-xs">CLIENT A</span>
+      <span class="text-white font-semibold">always receives first</span>
     </div>
     <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
-      <span class="text-dim w-8">08</span>
-      <span class="border border-dim text-dim px-3 py-1 text-xs">ALL CLIENTS</span>
-      <span class="text-dim">←</span>
-      <span class="border border-white px-3 py-1 text-xs">GATEWAY</span>
-      <span class="text-dim">Market data: OnTopOfBook / OnPriceDepthBook</span>
+      <span class="text-dim w-12">2nd</span>
+      <span class="border border-dim text-dim px-3 py-1 text-xs">CLIENT B</span>
+      <span class="text-dim">slight delay</span>
     </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <span class="text-dim w-12">3rd</span>
+      <span class="border border-dim text-dim px-3 py-1 text-xs">CLIENT C</span>
+      <span class="text-dim">more delay</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <span class="text-dim w-12">4th</span>
+      <span class="border border-dim text-dim px-3 py-1 text-xs">CLIENT D</span>
+      <span class="text-dim">always receives last</span>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-5 mt-8 text-base">
+    <p class="text-dim">Unfair — Client A has a systematic latency advantage on every single update. In trading, nanoseconds matter.</p>
+  </div>
+</section>
+
+<!-- FAIRNESS: POTENTIAL APPROACHES -->
+<section data-hl="gw clients gw-clients-down">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 04 · Market Data Fairness</p>
+  <h2>Fairer Distribution Strategies</h2>
+  <h3>Two approaches to eliminate systematic advantage</h3>
+
+  <div class="flex flex-col gap-8 mt-2">
+    <!-- APPROACH 1: ROUND-ROBIN -->
+    <div>
+      <p class="text-white font-semibold text-base mb-3">① Round-Robin Rotation</p>
+      <pre><code>start = cycle_counter % len(subscribers)
+rotated = subscribers[start:] + subscribers[:start]
+for client in rotated:
+    client.send(market_data)
+cycle_counter += 1</code></pre>
+      <div class="flex gap-[2px] mt-4 text-[13px]">
+        <div class="border border-faintest px-3 py-2 flex flex-col items-center gap-1">
+          <span class="text-dim text-xs">Cycle 1</span>
+          <span class="text-white">A B C D</span>
+        </div>
+        <div class="border border-faintest px-3 py-2 flex flex-col items-center gap-1">
+          <span class="text-dim text-xs">Cycle 2</span>
+          <span class="text-white">B C D A</span>
+        </div>
+        <div class="border border-faintest px-3 py-2 flex flex-col items-center gap-1">
+          <span class="text-dim text-xs">Cycle 3</span>
+          <span class="text-white">C D A B</span>
+        </div>
+        <div class="border border-white bg-surface px-3 py-2 flex flex-col items-center gap-1">
+          <span class="text-dim text-xs">Cycle 4</span>
+          <span class="text-white">D A B C</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- APPROACH 2: RANDOM SHUFFLE -->
+    <div>
+      <p class="text-white font-semibold text-base mb-3">② Random Shuffle</p>
+      <pre><code>random.shuffle(subscribers)
+for client in subscribers:
+    client.send(market_data)</code></pre>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-5 mt-6 text-base">
+    <p class="text-dim">Round-robin is deterministic and guarantees equal treatment over N cycles. Random shuffle provides fairness in expectation but not per-cycle.</p>
+  </div>
+</section>
+
+<!-- FAIRNESS: THE PROBLEM -->
+<section data-hl="ob gw ob-gw-down">
+  <p class="text-xs tracking-widest text-dim uppercase mb-6">Part 04 · Fairness</p>
+  <h2>Market Data Distribution — The Fairness Problem</h2>
+  <h3>Naive approach: iterate and send — Client 0 always wins</h3>
+
+  <pre class="mt-4"><code>for client in connected_clients:
+    client.send(market_data)      # Client[0] gets it first, every time</code></pre>
+
+  <div class="flex flex-col gap-[2px] mt-6 text-[15px]">
+    <div class="flex items-center gap-4 px-4 py-3 border border-white bg-surface">
+      <span class="text-white w-24">Client A</span>
+      <div class="bg-white/20 h-3 rounded" style="width:100%"></div>
+      <span class="text-white text-xs font-mono">t₀</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <span class="text-dim w-24">Client B</span>
+      <div class="bg-white/10 h-3 rounded" style="width:80%"></div>
+      <span class="text-dim text-xs font-mono">t₀ + δ</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <span class="text-dim w-24">Client C</span>
+      <div class="bg-white/10 h-3 rounded" style="width:60%"></div>
+      <span class="text-dim text-xs font-mono">t₀ + 2δ</span>
+    </div>
+    <div class="flex items-center gap-4 px-4 py-3 border border-faintest">
+      <span class="text-dim w-24">Client N</span>
+      <div class="bg-white/10 h-3 rounded" style="width:30%"></div>
+      <span class="text-dim text-xs font-mono">t₀ + Nδ</span>
+    </div>
+  </div>
+
+  <div class="border border-faint bg-surface p-5 mt-6 text-base">
+    <p class="text-dim">In HFT, even microseconds of systematic advantage compound — a deterministic ordering bias is unacceptable for a fair exchange</p>
   </div>
 </section>
 
